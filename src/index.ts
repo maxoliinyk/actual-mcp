@@ -11,7 +11,6 @@
  * - Generate financial statistics and analysis
  */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import dotenv from 'dotenv';
@@ -179,11 +178,8 @@ async function main(): Promise<void> {
   if (useSse) {
     const app = express();
     app.use(express.json());
-    let transport: SSEServerTransport | null = null;
-
-    // Log bearer auth status
     if (enableBearer) {
-      console.error('Bearer authentication enabled for SSE endpoints');
+      console.error('Bearer authentication enabled');
     } else {
       console.error('Bearer authentication disabled - endpoints are public');
     }
@@ -200,22 +196,6 @@ async function main(): Promise<void> {
     app.get(['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server/sse'], (_req, res) => {
       res.status(404).json({ error: 'OAuth metadata not configured for this server' });
     });
-    app.get(['/sse/.well-known/oauth-authorization-server'], (_req, res) => {
-      res.status(404).json({ error: 'OAuth metadata not configured for this server' });
-    });
-
-    const handleLegacySse = (req: Request, res: Response): void => {
-      transport = new SSEServerTransport('/messages', res);
-      server.connect(transport).then(() => {
-        console.log = (message: string) => server.sendLoggingMessage({ level: 'info', data: message });
-
-        console.error = (message: string) => server.sendLoggingMessage({ level: 'error', data: message });
-
-        console.error(`Actual Budget MCP Server (SSE) started on port ${resolvedPort}`);
-      });
-    };
-
-    app.get('/sse', bearerAuth, handleLegacySse);
 
     const streamablePaths = ['/', '/mcp'];
 
@@ -249,6 +229,7 @@ async function main(): Promise<void> {
             };
 
             try {
+              await server.close();
               await server.connect(streamableTransport);
 
               console.log = (message: string) => server.sendLoggingMessage({ level: 'info', data: message });
@@ -310,13 +291,7 @@ async function main(): Promise<void> {
       }
     });
 
-    app.post('/messages', bearerAuth, async (req: Request, res: Response) => {
-      if (transport) {
-        await transport.handlePostMessage(req, res, req.body);
-      } else {
-        res.status(500).json({ error: 'Transport not initialized' });
-      }
-    });
+
 
     app.listen(resolvedPort, (error) => {
       if (error) {
