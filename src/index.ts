@@ -221,10 +221,6 @@ async function main(): Promise<void> {
 
     app.all(streamablePaths, bearerAuth, async (req: Request, res: Response) => {
       const sessionHeader = parseSessionHeader(req.headers['mcp-session-id']);
-      if (req.method === 'GET' && !sessionHeader && req.headers.accept?.includes('text/event-stream')) {
-        handleLegacySse(req, res);
-        return;
-      }
       const requestLabel = `${req.method} ${req.path}`;
       try {
         let streamableTransport = sessionHeader ? streamableHttpTransports.get(sessionHeader) : undefined;
