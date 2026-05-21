@@ -322,6 +322,13 @@ async function main(): Promise<void> {
   }
 }
 
+// Reason: @actual-app/api internally fires async chains (loadBudget → runMigrations)
+// that throw errors outside the caller's promise chain. Without this handler,
+// Node.js crashes the process on unhandled rejections, killing the HTTP server.
+process.on('unhandledRejection', (reason: unknown) => {
+  console.error(`Unhandled rejection (server staying alive): ${toErrorMessage(reason)}`);
+});
+
 process.on('SIGINT', () => {
   console.error('SIGINT received, shutting down server');
   process.exit(0);

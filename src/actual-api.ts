@@ -34,12 +34,21 @@ export async function initActualApi(): Promise<void> {
   }
 
   initializing = true;
+  // Reason: Reset previous error so this attempt actually retries instead of
+  // immediately throwing the cached error on concurrent waiters.
+  initializationError = null;
   try {
     console.error('Initializing Actual Budget API...');
     const dataDir = process.env.ACTUAL_DATA_DIR || DEFAULT_DATA_DIR;
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
+
+    // Reason: After a failed downloadBudget (e.g. out-of-sync-migrations), stale
+    // SQLite files remain in dataDir. On retry, loadBudget opens the same corrupt
+    // database and throws the same error. Wiping the dir forces a fresh download.
+    if (fs.existsSync(dataDir)) {
+      fs.rmSync(dataDir, { recursive: true, force: true });
     }
+    fs.mkdirSync(dataDir, { recursive: true });
+
     const serverURL = process.env.ACTUAL_SERVER_URL;
     const password = process.env.ACTUAL_PASSWORD;
     // Reason: InitConfig is a discriminated union in 26.x — NoServerConfig forbids serverURL/password
@@ -68,6 +77,13 @@ export async function initActualApi(): Promise<void> {
   } catch (error) {
     console.error('Failed to initialize Actual Budget API:', error);
     initializationError = error instanceof Error ? error : new Error(String(error));
+    // Reason: Attempt graceful shutdown so the API internals release file handles
+    // and the next retry starts from a clean state.
+    try {
+      await api.shutdown();
+    } catch {
+      // Ignore shutdown errors during failed init
+    }
     throw initializationError;
   } finally {
     initializing = false;
