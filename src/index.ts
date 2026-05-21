@@ -19,41 +19,12 @@ import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { initActualApi, shutdownActualApi } from './actual-api.js';
 import { fetchAllAccounts } from './core/data/fetch-accounts.js';
-import { setupPrompts } from './prompts.js';
-import { setupResources } from './resources.js';
-import { setupTools } from './tools/index.js';
-import { SetLevelRequestSchema, isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import { createServer } from './server.js';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 
 // Reason: dotenv@17 (dotenvx) prints to stdout by default, which breaks MCP stdio JSON parsing
 dotenv.config({ path: '.env', quiet: true } as Parameters<typeof dotenv.config>[0]);
 
-const createMcpServer = (): Server => {
-  const server = new Server(
-    {
-      name: 'Actual Budget',
-      version: '1.0.0',
-    },
-    {
-      capabilities: {
-        resources: {},
-        tools: {},
-        prompts: {},
-        logging: {},
-      },
-    }
-  );
-
-  setupResources(server);
-  setupTools(server, enableWrite);
-  setupPrompts(server);
-
-  server.setRequestHandler(SetLevelRequestSchema, (request) => {
-    console.log(`--- Logging level: ${request.params.level}`);
-    return {};
-  });
-
-  return server;
-};
 
 // Argument parsing
 const {
@@ -195,12 +166,14 @@ async function main(): Promise<void> {
       res.status(200).json({ ok: true });
     });
     if (enableBearer) {
-      console.error('Bearer authentication enabled');
+      process.stderr.write('Bearer authentication enabled for SSE endpoints\n');
     } else {
-      console.error('Bearer authentication disabled - endpoints are public');
+      process.stderr.write('Bearer authentication disabled - endpoints are public\n');
     }
 
-    const streamableHttpTransports = new Map<string, StreamableHTTPServerTransport>();
+    // Per-connection maps for legacy SSE and streamable HTTP
+    const legacySseConnections = new Map<string, { server: Server; transport: SSEServerTransport }>();
+    const streamableSessions = new Map<string, { server: Server; transport: StreamableHTTPServerTransport }>();
 
     const parseSessionHeader = (value: string | string[] | undefined): string | undefined => {
       if (!value) {
@@ -212,6 +185,27 @@ async function main(): Promise<void> {
     app.get(['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server/sse'], (_req, res) => {
       res.status(404).json({ error: 'OAuth metadata not configured for this server' });
     });
+    app.get(['/sse/.well-known/oauth-authorization-server'], (_req, res) => {
+      res.status(404).json({ error: 'OAuth metadata not configured for this server' });
+    });
+
+    const handleLegacySse = (_req: Request, res: Response): void => {
+      const connectionId = randomUUID();
+      const connServer = createServer({ enableWrite: !!enableWrite });
+      const sseTransport = new SSEServerTransport(`/messages?connectionId=${connectionId}`, res);
+      legacySseConnections.set(connectionId, { server: connServer, transport: sseTransport });
+
+      connServer.connect(sseTransport).then(() => {
+        process.stderr.write(`Legacy SSE connection established (connectionId ${connectionId})\n`);
+      });
+
+      res.on('close', () => {
+        legacySseConnections.delete(connectionId);
+        connServer.close();
+      });
+    };
+
+    app.get('/sse', bearerAuth, handleLegacySse);
 
     const streamablePaths = ['/', '/mcp'];
 
@@ -219,42 +213,39 @@ async function main(): Promise<void> {
       const sessionHeader = parseSessionHeader(req.headers['mcp-session-id']);
       const requestLabel = `${req.method} ${req.path}`;
       try {
-        let streamableTransport = sessionHeader ? streamableHttpTransports.get(sessionHeader) : undefined;
+        let session = sessionHeader ? streamableSessions.get(sessionHeader) : undefined;
 
-        if (!streamableTransport) {
+        if (!session) {
           if (req.method === 'POST' && isInitializeRequest(req.body)) {
             const remoteAddress = req.ip ?? req.socket.remoteAddress ?? 'unknown';
-            streamableTransport = new StreamableHTTPServerTransport({
+            const sessionServer = createServer({ enableWrite: !!enableWrite });
+            const streamableTransport = new StreamableHTTPServerTransport({
               sessionIdGenerator: () => randomUUID(),
               onsessioninitialized: (sessionId) => {
-                streamableHttpTransports.set(sessionId, streamableTransport!);
+                streamableSessions.set(sessionId, { server: sessionServer, transport: streamableTransport });
                 console.info(`Streamable HTTP session initialized (session ${sessionId}) from ${remoteAddress}`);
               },
               onsessionclosed: (sessionId) => {
-                streamableHttpTransports.delete(sessionId);
+                streamableSessions.delete(sessionId);
+                sessionServer.close();
                 console.info(`Streamable HTTP session closed (session ${sessionId})`);
               },
             });
 
             streamableTransport.onclose = () => {
-              const activeSessionId = streamableTransport?.sessionId;
+              const activeSessionId = streamableTransport.sessionId;
               if (activeSessionId) {
-                streamableHttpTransports.delete(activeSessionId);
+                streamableSessions.delete(activeSessionId);
+                sessionServer.close();
                 console.info(`Streamable HTTP transport closed (session ${activeSessionId})`);
               }
             };
 
             try {
-              const sessionServer = createMcpServer();
               await sessionServer.connect(streamableTransport);
-
-              console.log = (message: string) => sessionServer.sendLoggingMessage({ level: 'info', data: message });
-
-              console.error = (message: string) => sessionServer.sendLoggingMessage({ level: 'error', data: message });
-
-              console.error(`Actual Budget MCP Server (Streamable HTTP) session connected on port ${resolvedPort}`);
+              process.stderr.write(`Actual Budget MCP Server (Streamable HTTP) started on port ${resolvedPort}\n`);
             } catch (error) {
-              console.error(`Failed to connect streamable HTTP transport: ${toErrorMessage(error)}`);
+              process.stderr.write(`Failed to connect streamable HTTP transport: ${toErrorMessage(error)}\n`);
               res.status(500).json({
                 jsonrpc: '2.0',
                 error: {
@@ -265,6 +256,8 @@ async function main(): Promise<void> {
               });
               return;
             }
+
+            session = { server: sessionServer, transport: streamableTransport };
           } else {
             res.status(400).json({
               jsonrpc: '2.0',
@@ -278,21 +271,9 @@ async function main(): Promise<void> {
           }
         }
 
-        if (!streamableTransport) {
-          res.status(500).json({
-            jsonrpc: '2.0',
-            error: {
-              code: -32603,
-              message: 'Internal server error',
-            },
-            id: null,
-          });
-          return;
-        }
-
-        await streamableTransport.handleRequest(req, res, req.body);
+        await session.transport.handleRequest(req, res, req.body);
       } catch (error) {
-        console.error(`Streamable HTTP handler error for ${requestLabel}: ${toErrorMessage(error)}`);
+        process.stderr.write(`Streamable HTTP handler error for ${requestLabel}: ${toErrorMessage(error)}\n`);
 
         if (!res.headersSent) {
           res.status(500).json({
@@ -307,18 +288,46 @@ async function main(): Promise<void> {
       }
     });
 
-    app.listen(resolvedPort, (error) => {
-      if (error) {
-        console.error('Error:', error);
+    app.post('/messages', bearerAuth, async (req: Request, res: Response) => {
+      const connectionId = req.query.connectionId as string | undefined;
+      const conn = connectionId ? legacySseConnections.get(connectionId) : undefined;
+      if (conn) {
+        await conn.transport.handlePostMessage(req, res, req.body);
       } else {
-        console.error(`Actual Budget MCP Server (SSE) started on port ${resolvedPort}`);
+        res.status(400).json({ error: 'Invalid or missing connectionId' });
       }
     });
+
+    app.listen(resolvedPort, (error) => {
+      if (error) {
+        process.stderr.write(`Error: ${toErrorMessage(error)}\n`);
+      } else {
+        process.stderr.write(`Actual Budget MCP Server (HTTP) listening on port ${resolvedPort}\n`);
+      }
+    });
+    // SIGINT handler: close all active connections
+    process.on('SIGINT', () => {
+      process.stderr.write('SIGINT received, shutting down server\n');
+      for (const [, conn] of legacySseConnections) {
+        conn.server.close();
+      }
+      for (const [, session] of streamableSessions) {
+        session.server.close();
+        session.transport.close();
+      }
+      process.exit(0);
+    });
   } else {
-    const server = createMcpServer();
+    const server = createServer({ enableWrite: !!enableWrite });
     const transport = new StdioServerTransport();
     await server.connect(transport);
     console.error('Actual Budget MCP Server (stdio) started');
+
+    process.on('SIGINT', () => {
+      console.error('SIGINT received, shutting down server');
+      server.close();
+      process.exit(0);
+    });
   }
 }
 
@@ -327,11 +336,6 @@ async function main(): Promise<void> {
 // Node.js crashes the process on unhandled rejections, killing the HTTP server.
 process.on('unhandledRejection', (reason: unknown) => {
   console.error(`Unhandled rejection (server staying alive): ${toErrorMessage(reason)}`);
-});
-
-process.on('SIGINT', () => {
-  console.error('SIGINT received, shutting down server');
-  process.exit(0);
 });
 
 main().catch((error: unknown) => {
