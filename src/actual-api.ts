@@ -189,7 +189,7 @@ export async function deletePayee(id: string): Promise<unknown> {
  */
 export async function createRule(args: Record<string, unknown>): Promise<RuleEntity> {
   await initActualApi();
-  return api.createRule(args as unknown as Omit<RuleEntity, 'id'>);
+  return api.createRule(args as any);
 }
 
 /**
@@ -197,7 +197,7 @@ export async function createRule(args: Record<string, unknown>): Promise<RuleEnt
  */
 export async function updateRule(args: Record<string, unknown>): Promise<RuleEntity> {
   await initActualApi();
-  return api.updateRule(args as unknown as RuleEntity);
+  return api.updateRule(args as any);
 }
 
 /**
