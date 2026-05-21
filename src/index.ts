@@ -27,21 +27,33 @@ import { SetLevelRequestSchema, isInitializeRequest } from '@modelcontextprotoco
 // Reason: dotenv@17 (dotenvx) prints to stdout by default, which breaks MCP stdio JSON parsing
 dotenv.config({ path: '.env', quiet: true } as Parameters<typeof dotenv.config>[0]);
 
-// Initialize the MCP server
-const server = new Server(
-  {
-    name: 'Actual Budget',
-    version: '1.0.0',
-  },
-  {
-    capabilities: {
-      resources: {},
-      tools: {},
-      prompts: {},
-      logging: {},
+const createMcpServer = (): Server => {
+  const server = new Server(
+    {
+      name: 'Actual Budget',
+      version: '1.0.0',
     },
-  }
-);
+    {
+      capabilities: {
+        resources: {},
+        tools: {},
+        prompts: {},
+        logging: {},
+      },
+    }
+  );
+
+  setupResources(server);
+  setupTools(server, enableWrite);
+  setupPrompts(server);
+
+  server.setRequestHandler(SetLevelRequestSchema, (request) => {
+    console.log(`--- Logging level: ${request.params.level}`);
+    return {};
+  });
+
+  return server;
+};
 
 // Argument parsing
 const {
@@ -65,7 +77,7 @@ const {
   allowPositionals: true,
 });
 
-const resolvedPort = port ? parseInt(port, 10) : 3000;
+const resolvedPort = parseInt(port ?? process.env.PORT ?? '3000', 10);
 
 // Bearer authentication middleware
 const bearerAuth = (req: Request, res: Response, next: NextFunction): void => {
@@ -178,6 +190,10 @@ async function main(): Promise<void> {
   if (useSse) {
     const app = express();
     app.use(express.json());
+
+    app.get('/healthz', (_req, res) => {
+      res.status(200).json({ ok: true });
+    });
     if (enableBearer) {
       console.error('Bearer authentication enabled');
     } else {
@@ -229,14 +245,14 @@ async function main(): Promise<void> {
             };
 
             try {
-              await server.close();
-              await server.connect(streamableTransport);
+              const sessionServer = createMcpServer();
+              await sessionServer.connect(streamableTransport);
 
-              console.log = (message: string) => server.sendLoggingMessage({ level: 'info', data: message });
+              console.log = (message: string) => sessionServer.sendLoggingMessage({ level: 'info', data: message });
 
-              console.error = (message: string) => server.sendLoggingMessage({ level: 'error', data: message });
+              console.error = (message: string) => sessionServer.sendLoggingMessage({ level: 'error', data: message });
 
-              console.error(`Actual Budget MCP Server (Streamable HTTP) started on port ${resolvedPort}`);
+              console.error(`Actual Budget MCP Server (Streamable HTTP) session connected on port ${resolvedPort}`);
             } catch (error) {
               console.error(`Failed to connect streamable HTTP transport: ${toErrorMessage(error)}`);
               res.status(500).json({
@@ -291,8 +307,6 @@ async function main(): Promise<void> {
       }
     });
 
-
-
     app.listen(resolvedPort, (error) => {
       if (error) {
         console.error('Error:', error);
@@ -301,44 +315,19 @@ async function main(): Promise<void> {
       }
     });
   } else {
+    const server = createMcpServer();
     const transport = new StdioServerTransport();
     await server.connect(transport);
     console.error('Actual Budget MCP Server (stdio) started');
   }
 }
 
-setupResources(server);
-setupTools(server, enableWrite);
-setupPrompts(server);
-
-server.setRequestHandler(SetLevelRequestSchema, (request) => {
-  console.log(`--- Logging level: ${request.params.level}`);
-  return {};
-});
-
 process.on('SIGINT', () => {
   console.error('SIGINT received, shutting down server');
-  server.close();
   process.exit(0);
 });
 
-main()
-  .then(() => {
-    if (!useSse) {
-      // TODO: Setup proper logging level change. Messages are available in the notification of MCP Inspector
-      console.log = (message: string) =>
-        server.sendLoggingMessage({
-          level: 'info',
-          data: message,
-        });
-      console.error = (message: string) =>
-        server.sendLoggingMessage({
-          level: 'error',
-          data: message,
-        });
-    }
-  })
-  .catch((error: unknown) => {
-    console.error(`Server error: ${toErrorMessage(error)}`);
-    process.exit(1);
-  });
+main().catch((error: unknown) => {
+  console.error(`Server error: ${toErrorMessage(error)}`);
+  process.exit(1);
+});
