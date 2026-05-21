@@ -1,0 +1,16 @@
+node_modules/
+build/
+coverage/
+.git/
+.github/
+.vscode/
+.claude/
+.gemini/
+.DS_Store
+*.log
+.env
+.env.*
+PRPs/
+examples/
+*.md
+!README.md
