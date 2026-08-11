@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.12.1](https://github.com/s-stefanov/actual-mcp/compare/v1.12.0...v1.12.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* **deps:** update dependency @actual-app/api to v26.8.1 ([#200](https://github.com/s-stefanov/actual-mcp/issues/200)) ([b0c6071](https://github.com/s-stefanov/actual-mcp/commit/b0c6071d651688ce51e96b8eb932c69ce04d3f5b))
+* **deps:** update dependency @actual-app/core to v26.8.1 ([#202](https://github.com/s-stefanov/actual-mcp/issues/202)) ([1c4ee17](https://github.com/s-stefanov/actual-mcp/commit/1c4ee17da9af6995d2f7dac6a949c87b5ab9cb4f))
+* **deps:** update dependency zod to v4.4.3 ([#178](https://github.com/s-stefanov/actual-mcp/issues/178)) ([69d9413](https://github.com/s-stefanov/actual-mcp/commit/69d9413342acbecd1f6ab748300337418ec8ac6d))
+* re-sync with the server instead of serving the startup snapshot ([#193](https://github.com/s-stefanov/actual-mcp/issues/193)) ([0ca295c](https://github.com/s-stefanov/actual-mcp/commit/0ca295cb5f791f2b26e1bb9f9a01379e6945c80d))
+* stop update-transaction payee_name from crashing the server ([#204](https://github.com/s-stefanov/actual-mcp/issues/204)) ([d4aca92](https://github.com/s-stefanov/actual-mcp/commit/d4aca924e09731e3106d6f9e7e31fb621afe2a02))
+* use constant-time comparison for bearer token validation ([#194](https://github.com/s-stefanov/actual-mcp/issues/194)) ([d761cea](https://github.com/s-stefanov/actual-mcp/commit/d761cead6b322549d26012b1cc662a03acf50f53))
+
+## [1.12.0](https://github.com/s-stefanov/actual-mcp/compare/v1.11.3...v1.12.0) (2026-07-27)
+
+
+### Features
+
+* Fix balance cutoff, timezone bugs, and update documentation, upgrade actual budget's api library ([#167](https://github.com/s-stefanov/actual-mcp/issues/167)) ([54bc75a](https://github.com/s-stefanov/actual-mcp/commit/54bc75a4780ecfeaa0faefed06affb7fbdb5e407))
+* **get-transactions:** expose transfer_id in markdown output ([#169](https://github.com/s-stefanov/actual-mcp/issues/169)) ([ff1b276](https://github.com/s-stefanov/actual-mcp/commit/ff1b2765b9f5614c236af55454bc201292d58645)), closes [#168](https://github.com/s-stefanov/actual-mcp/issues/168)
+
+
+### Bug Fixes
+
+* bump @actual-app/api and @actual-app/core to 26.7.0 ([#191](https://github.com/s-stefanov/actual-mcp/issues/191)) ([0728637](https://github.com/s-stefanov/actual-mcp/commit/0728637bdcd13bc6315adf34b10917a70bd4d8b4))
+* **deps:** update dependency dotenv to v17.4.2 ([#147](https://github.com/s-stefanov/actual-mcp/issues/147)) ([f3932fb](https://github.com/s-stefanov/actual-mcp/commit/f3932fb30bd9ff45d22da271e595d03c5cec2319))
+
+## [1.11.3](https://github.com/s-stefanov/actual-mcp/compare/v1.11.2...v1.11.3) (2026-06-02)
+
+
+### Bug Fixes
+
+* **deps:** update dependency zod-to-json-schema to v3.25.2 ([#155](https://github.com/s-stefanov/actual-mcp/issues/155)) ([f4a3e90](https://github.com/s-stefanov/actual-mcp/commit/f4a3e90666605ce95fef3c392e8f459e695c0ab4))
+* prevent infinite recursion in streamableTransport.onclose ([#171](https://github.com/s-stefanov/actual-mcp/issues/171)) ([19d94ad](https://github.com/s-stefanov/actual-mcp/commit/19d94ad71386c5748cf457f1b94bbe0d0d614f8f)), closes [#170](https://github.com/s-stefanov/actual-mcp/issues/170)
+
 ## [1.11.2](https://github.com/s-stefanov/actual-mcp/compare/v1.11.1...v1.11.2) (2026-04-03)
 
 

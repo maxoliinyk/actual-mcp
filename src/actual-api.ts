@@ -1,29 +1,57 @@
-import api from '@actual-app/api';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import * as api from '@actual-app/api';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import { BudgetFile, TransactionData, UpdateTransactionData } from './types.js';
-import {
-  APIAccountEntity,
-  APICategoryEntity,
-  APICategoryGroupEntity,
-  APIPayeeEntity,
-} from '@actual-app/core/server/api-models';
-import { RuleEntity, TransactionEntity } from '@actual-app/core/types/models/index';
+import { APIAccountEntity, APICategoryEntity, APICategoryGroupEntity, APIPayeeEntity } from '@actual-app/api/models';
+import { RuleEntity, TransactionEntity } from '@actual-app/core/types/models';
 import { ImportTransactionEntity } from '@actual-app/core/types/models/import-transaction';
 
 const DEFAULT_DATA_DIR: string = path.resolve(os.homedir() || '.', '.actual');
+const DEFAULT_SYNC_TTL_MS = 60_000;
 
 // API initialization state
 let initialized = false;
 let initializing = false;
 let initializationError: Error | null = null;
+let lastSyncAt = 0;
+
+/**
+ * How long downloaded data is considered fresh, in milliseconds.
+ * Set ACTUAL_SYNC_TTL_MS to 0 to sync before every call, or to a negative
+ * value to disable automatic syncing entirely.
+ */
+function syncTtlMs(): number {
+  const raw = process.env.ACTUAL_SYNC_TTL_MS;
+  if (raw === undefined || raw === '') return DEFAULT_SYNC_TTL_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : DEFAULT_SYNC_TTL_MS;
+}
+
+/**
+ * Pull changes made elsewhere into the local budget file when its cache is stale.
+ * A failed sync is logged but not thrown so reads can continue from local data.
+ */
+async function syncIfStale(): Promise<void> {
+  const ttl = syncTtlMs();
+  if (ttl < 0 || Date.now() - lastSyncAt < ttl) return;
+
+  try {
+    await api.sync();
+    lastSyncAt = Date.now();
+  } catch (error) {
+    console.error('Failed to sync with Actual server, continuing with local data:', error);
+  }
+}
 
 /**
  * Initialize the Actual Budget API
  */
 export async function initActualApi(): Promise<void> {
-  if (initialized) return;
+  if (initialized) {
+    await syncIfStale();
+    return;
+  }
   if (initializing) {
     // Wait for initialization to complete if already in progress
     while (initializing) {
@@ -41,13 +69,9 @@ export async function initActualApi(): Promise<void> {
     console.error('Initializing Actual Budget API...');
     const dataDir = process.env.ACTUAL_DATA_DIR || DEFAULT_DATA_DIR;
 
-    // Reason: After a failed downloadBudget (e.g. out-of-sync-migrations), stale
-    // SQLite files remain in dataDir. On retry, loadBudget opens the same corrupt
-    // database and throws the same error. Wiping the dir forces a fresh download.
-    if (fs.existsSync(dataDir)) {
-      fs.rmSync(dataDir, { recursive: true, force: true });
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
     }
-    fs.mkdirSync(dataDir, { recursive: true });
 
     const serverURL = process.env.ACTUAL_SERVER_URL;
     const password = process.env.ACTUAL_PASSWORD;
@@ -73,6 +97,7 @@ export async function initActualApi(): Promise<void> {
     );
 
     initialized = true;
+    lastSyncAt = Date.now();
     console.error('Actual Budget API initialized successfully');
   } catch (error) {
     console.error('Failed to initialize Actual Budget API:', error);
@@ -101,6 +126,7 @@ export async function shutdownActualApi(): Promise<void> {
     console.error('Error shutting down Actual Budget API:', err);
   } finally {
     initialized = false;
+    lastSyncAt = 0;
   }
 }
 
@@ -189,7 +215,7 @@ export async function deletePayee(id: string): Promise<unknown> {
  */
 export async function createRule(args: Record<string, unknown>): Promise<RuleEntity> {
   await initActualApi();
-  return api.createRule(args as any);
+  return api.createRule(args as unknown as Omit<RuleEntity, 'id'>);
 }
 
 /**
@@ -197,7 +223,7 @@ export async function createRule(args: Record<string, unknown>): Promise<RuleEnt
  */
 export async function updateRule(args: Record<string, unknown>): Promise<RuleEntity> {
   await initActualApi();
-  return api.updateRule(args as any);
+  return api.updateRule(args as unknown as RuleEntity);
 }
 
 /**

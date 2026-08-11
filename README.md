@@ -114,6 +114,10 @@ export ACTUAL_PASSWORD="your-password"
 
 # Specific budget to use (optional)
 export ACTUAL_BUDGET_SYNC_ID="your-budget-id"
+
+# How long downloaded data stays fresh before the server re-syncs, in ms
+# (default: 60000). Use 0 to sync before every call, or -1 to never sync.
+export ACTUAL_SYNC_TTL_MS="60000"
 ```
 
 Optional: separate encryption budget password
@@ -213,7 +217,7 @@ After saving the configuration, restart Claude Desktop.
 
 > 💡 Use `--enable-write` to enable write-access tools.
 
-## Running an SSE Server
+## Running an HTTP Server
 
 To expose the server over a port using Docker:
 
@@ -232,6 +236,16 @@ docker run -i --rm \
 > ⚠️ Important: When using --enable-bearer, the BEARER_TOKEN environment variable must be set.  
 > 🔒 This is highly recommended if you're exposing your server via a public URL.
 
+The Streamable HTTP endpoint is available at `/mcp`. It is stateless: every
+request is handled independently and clients do not need to preserve an
+`Mcp-Session-Id` header. The legacy connection-oriented endpoint remains at
+`/sse`.
+
+For Render deployments, configure the health check path as `/healthz`. A free
+Render service can still take longer than an MCP client's connection timeout to
+wake after spinning down; use an always-on instance when the first request must
+reliably succeed.
+
 ## Example Queries
 
 Once connected, you can ask Claude questions like:
@@ -249,7 +263,8 @@ Example Codex configuration:
 In `~/.codex/config.toml`:
 ```toml
 [mcp_servers.actual-budget]
-url = "http://localhost:3000"
+url = "http://localhost:3000/mcp"
+startup_timeout_sec = 60
 ```
 
 Point Codex at the same port you pass to `npm start -- --sse --port <PORT>`.
@@ -284,6 +299,13 @@ npx @modelcontextprotocol/inspector node build/index.js
 - `types.ts` - Type definitions for API responses and parameters
 - `prompts.ts` - Prompt templates for LLM interactions
 - `utils.ts` - Helper functions for date formatting and more
+
+## Fork Modifications
+
+This fork includes the following changes from the upstream [s-stefanov/actual-mcp](https://github.com/s-stefanov/actual-mcp):
+
+- **`@actual-app/api` bumped from `^26.3.0` to `^26.5.0`** — updates the Actual Budget API client to the latest version for compatibility with newer Actual server releases.
+- **Balance cutoff fix** — `getAccountBalance` calls now pass a far-future cutoff date (`2099-01-01`) so that future-dated pending transactions are included in balance calculations. Without this fix, banks that pre-date pending transactions (showing them in the future) would cause reported balances to be lower than the actual cleared balance.
 
 ## License
 

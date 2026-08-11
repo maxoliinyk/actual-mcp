@@ -1,4 +1,4 @@
-import { RuleEntity } from '@actual-app/core/types/models/rule';
+import { RuleEntity } from '@actual-app/core/types/models';
 import { getRules } from '../../actual-api.js';
 
 export async function fetchAllRules(): Promise<RuleEntity[]> {

@@ -75,8 +75,30 @@ export function error(message: string): CallToolResult {
  * @returns An error response object
  */
 export function errorFromCatch(err: unknown): CallToolResult {
-  const message = err instanceof Error ? err.message : String(err);
-  return error(message);
+  if (err instanceof Error) {
+    return error(err.message);
+  }
+
+  if (typeof err === 'string') {
+    return error(err);
+  }
+
+  if (err && typeof err === 'object') {
+    const record = err as Record<string, unknown>;
+    for (const key of ['message', 'error', 'reason']) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim()) {
+        return error(value);
+      }
+      if (value instanceof Error) {
+        return error(value.message);
+      }
+    }
+
+    return error('Unexpected error. Check the server logs for details.');
+  }
+
+  return error(String(err));
 }
 
 /**

@@ -11,21 +11,20 @@
  * - Generate financial statistics and analysis
  */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import dotenv from 'dotenv';
 import express, { NextFunction, Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
+import { isValidBearerToken } from './utils/bearer-auth.js';
 import { initActualApi, shutdownActualApi } from './actual-api.js';
 import { fetchAllAccounts } from './core/data/fetch-accounts.js';
 import { createServer } from './server.js';
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import { createStatelessMcpHandler } from './http/stateless-mcp-handler.js';
 
 // Reason: dotenv@17 (dotenvx) prints to stdout by default, which breaks MCP stdio JSON parsing
 dotenv.config({ path: '.env', quiet: true } as Parameters<typeof dotenv.config>[0]);
-
 
 // Argument parsing
 const {
@@ -85,7 +84,7 @@ const bearerAuth = (req: Request, res: Response, next: NextFunction): void => {
     return;
   }
 
-  if (token !== expectedToken) {
+  if (!isValidBearerToken(token, expectedToken)) {
     res.status(401).json({
       error: 'Invalid bearer token',
     });
@@ -172,16 +171,8 @@ async function main(): Promise<void> {
       process.stderr.write('Bearer authentication disabled - endpoints are public\n');
     }
 
-    // Per-connection maps for legacy SSE and streamable HTTP
+    // Legacy SSE remains connection-oriented; Streamable HTTP is stateless.
     const legacySseConnections = new Map<string, { server: Server; transport: SSEServerTransport }>();
-    const streamableSessions = new Map<string, { server: Server; transport: StreamableHTTPServerTransport }>();
-
-    const parseSessionHeader = (value: string | string[] | undefined): string | undefined => {
-      if (!value) {
-        return undefined;
-      }
-      return Array.isArray(value) ? value[0] : value;
-    };
 
     app.get(['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server/sse'], (_req, res) => {
       res.status(404).json({ error: 'OAuth metadata not configured for this server' });
@@ -209,84 +200,12 @@ async function main(): Promise<void> {
     app.get('/sse', bearerAuth, handleLegacySse);
 
     const streamablePaths = ['/', '/mcp'];
-
-    app.all(streamablePaths, bearerAuth, async (req: Request, res: Response) => {
-      const sessionHeader = parseSessionHeader(req.headers['mcp-session-id']);
-      const requestLabel = `${req.method} ${req.path}`;
-      try {
-        let session = sessionHeader ? streamableSessions.get(sessionHeader) : undefined;
-
-        if (!session) {
-          if (req.method === 'POST' && isInitializeRequest(req.body)) {
-            const remoteAddress = req.ip ?? req.socket.remoteAddress ?? 'unknown';
-            const sessionServer = createServer({ enableWrite: !!enableWrite });
-            const streamableTransport = new StreamableHTTPServerTransport({
-              sessionIdGenerator: () => randomUUID(),
-              onsessioninitialized: (sessionId) => {
-                streamableSessions.set(sessionId, { server: sessionServer, transport: streamableTransport });
-                console.info(`Streamable HTTP session initialized (session ${sessionId}) from ${remoteAddress}`);
-              },
-              onsessionclosed: (sessionId) => {
-                streamableSessions.delete(sessionId);
-                sessionServer.close();
-                console.info(`Streamable HTTP session closed (session ${sessionId})`);
-              },
-            });
-
-            streamableTransport.onclose = () => {
-              const activeSessionId = streamableTransport.sessionId;
-              if (activeSessionId) {
-                streamableSessions.delete(activeSessionId);
-                sessionServer.close();
-                console.info(`Streamable HTTP transport closed (session ${activeSessionId})`);
-              }
-            };
-
-            try {
-              await sessionServer.connect(streamableTransport);
-              process.stderr.write(`Actual Budget MCP Server (Streamable HTTP) started on port ${resolvedPort}\n`);
-            } catch (error) {
-              process.stderr.write(`Failed to connect streamable HTTP transport: ${toErrorMessage(error)}\n`);
-              res.status(500).json({
-                jsonrpc: '2.0',
-                error: {
-                  code: -32603,
-                  message: 'Internal server error',
-                },
-                id: null,
-              });
-              return;
-            }
-
-            session = { server: sessionServer, transport: streamableTransport };
-          } else {
-            res.status(400).json({
-              jsonrpc: '2.0',
-              error: {
-                code: -32000,
-                message: 'Bad Request: No valid session ID provided',
-              },
-              id: null,
-            });
-            return;
-          }
-        }
-
-        await session.transport.handleRequest(req, res, req.body);
-      } catch (error) {
-        process.stderr.write(`Streamable HTTP handler error for ${requestLabel}: ${toErrorMessage(error)}\n`);
-
-        if (!res.headersSent) {
-          res.status(500).json({
-            jsonrpc: '2.0',
-            error: {
-              code: -32603,
-              message: 'Internal server error',
-            },
-            id: null,
-          });
-        }
-      }
+    app.post(streamablePaths, bearerAuth, createStatelessMcpHandler({ enableWrite: !!enableWrite }));
+    app.get(streamablePaths, bearerAuth, (_req, res) => {
+      res.status(405).set('Allow', 'POST').json({ error: 'Use POST for stateless Streamable HTTP requests' });
+    });
+    app.delete(streamablePaths, bearerAuth, (_req, res) => {
+      res.status(405).set('Allow', 'POST').json({ error: 'Stateless Streamable HTTP has no session to delete' });
     });
 
     app.post('/messages', bearerAuth, async (req: Request, res: Response) => {
@@ -312,10 +231,6 @@ async function main(): Promise<void> {
       for (const [, conn] of legacySseConnections) {
         conn.server.close();
       }
-      for (const [, session] of streamableSessions) {
-        session.server.close();
-        session.transport.close();
-      }
       process.exit(0);
     });
   } else {
@@ -332,11 +247,13 @@ async function main(): Promise<void> {
   }
 }
 
-// Reason: @actual-app/api internally fires async chains (loadBudget → runMigrations)
-// that throw errors outside the caller's promise chain. Without this handler,
-// Node.js crashes the process on unhandled rejections, killing the HTTP server.
-process.on('unhandledRejection', (reason: unknown) => {
-  console.error(`Unhandled rejection (server staying alive): ${toErrorMessage(reason)}`);
+// Reason: async side effects inside @actual-app/api can otherwise terminate the
+// process and leave HTTP clients connected to a server that never responds.
+process.on('unhandledRejection', (reason) => {
+  console.error(`Unhandled rejection: ${toErrorMessage(reason)}`);
+});
+process.on('uncaughtException', (error) => {
+  console.error(`Uncaught exception: ${toErrorMessage(error)}`);
 });
 
 main().catch((error: unknown) => {
