@@ -45,4 +45,4 @@ RUN npm ci --omit=dev
 RUN apt-get purge -y python3 make g++ && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 3000
-CMD ["node", "build/index.js", "--sse", "--enable-write"]
+CMD ["node", "build/index.js", "--sse", "--enable-write", "--enable-bearer"]

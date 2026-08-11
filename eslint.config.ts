@@ -31,7 +31,7 @@ export default tseslint.config(
       parser: tseslint.parser,
       parserOptions: {
         projectService: {
-          allowDefaultProject: ['*.ts', '*.js', 'vitest.config.ts'],
+          allowDefaultProject: ['*.ts', '*.js', 'vitest.config.ts', 'cloudflare/*.ts'],
         },
         tsconfigRootDir: import.meta.dirname,
       },

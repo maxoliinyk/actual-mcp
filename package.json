@@ -19,6 +19,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
+    "deploy:cloudflare": "wrangler deploy",
+    "dev:cloudflare": "wrangler dev",
     "watch": "tsc --watch",
     "inspector": "npx @modelcontextprotocol/inspector -e ACTUAL_SERVER_URL=$ACTUAL_SERVER_URL -e ACTUAL_PASSWORD=$ACTUAL_PASSWORD -e ACTUAL_BUDGET_SYNC_ID=$ACTUAL_BUDGET_SYNC_ID node build/index.js",
     "start": "node build/index.js --sse",
@@ -31,13 +33,15 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc --noEmit && tsc -p tsconfig.cloudflare.json",
+    "types:cloudflare": "wrangler types ./cloudflare/worker-configuration.d.ts",
     "quality": "npm run lint && npm run format:check && npm run type-check",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@actual-app/api": "26.8.1",
     "@actual-app/core": "26.8.1",
+    "@cloudflare/containers": "^0.3.7",
     "@modelcontextprotocol/sdk": "1.27.1",
     "dotenv": "17.4.2",
     "express": "5.2.1",
@@ -59,7 +63,8 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.60.1",
     "vite-tsconfig-paths": "6.1.1",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "wrangler": "^4.120.1"
   },
   "publishConfig": {
     "access": "public"

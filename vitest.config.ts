@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [tsconfigPaths()],
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'cloudflare/**/*.test.ts'],
     globals: true,
     coverage: {
       provider: 'v8',

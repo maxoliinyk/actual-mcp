@@ -246,6 +246,27 @@ Render service can still take longer than an MCP client's connection timeout to
 wake after spinning down; use an always-on instance when the first request must
 reliably succeed.
 
+### Cloudflare Containers
+
+Actual MCP uses native SQLite and a writable filesystem, so it runs in a Cloudflare
+Container behind a Worker rather than directly in the Workers runtime. Containers
+require the Workers Paid plan and a running Docker-compatible daemon for deployment.
+
+Upload the required secrets and deploy:
+
+```bash
+npx wrangler secret put ACTUAL_SERVER_URL
+npx wrangler secret put ACTUAL_PASSWORD
+npx wrangler secret put ACTUAL_BUDGET_SYNC_ID
+npx wrangler secret put BEARER_TOKEN
+npm run deploy:cloudflare
+```
+
+If the budget uses a separate encryption password, also upload
+`ACTUAL_BUDGET_ENCRYPTION_PASSWORD`. The Worker exposes `/mcp`, rejects anonymous
+requests before starting the on-demand container, and keeps the container in Western
+Europe for ten minutes after activity.
+
 ## Example Queries
 
 Once connected, you can ask Claude questions like:

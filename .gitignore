@@ -3,6 +3,8 @@ build/
 coverage/
 *.log
 .env
+.dev.vars*
+.wrangler/
 data/**
 .DS_Store
 .vscode/launch.json
