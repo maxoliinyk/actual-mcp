@@ -28,6 +28,26 @@ The Actual Budget MCP Server allows you to interact with your personal financial
 
 - **`spending-by-category`** - Generate spending breakdowns categorized by type
 - **`monthly-summary`** - Get monthly income, expenses, and savings metrics
+- **`budget-vs-actual`** - Compare budgeted amounts against actual spending per category
+- **`net-worth`** - Track assets, liabilities, and net worth across all accounts over time
+- **`category-trends`** - See how spending in each category moves month over month, with trend direction
+- **`spending-by-payee`** - Rank payees by how much was spent with (or received from) each one
+- **`cash-flow`** - Report income, expenses, and net cash flow per month or week
+
+> The five tools above return JSON rather than markdown, so amounts stay machine-readable. Every amount is an integer number of cents, and each response carries an `amountsIn` field describing the sign conventions it uses.
+
+#### Custom Reports & Dashboards
+
+- **`get-custom-reports`** - Retrieve every saved custom report from the Reports section
+- **`create-custom-report`** - Create a saved custom report
+- **`update-custom-report`** - Update fields on a saved custom report, leaving the rest unchanged
+- **`delete-custom-report`** - Delete a saved custom report
+- **`get-dashboards`** - Retrieve every dashboard page and the widgets laid out on it
+- **`add-dashboard-widget`** - Add a widget to a dashboard page
+- **`update-dashboard-widget`** - Update a widget's configuration, position, or size
+- **`remove-dashboard-widget`** - Remove a widget from its page
+- **`organize-dashboard`** - Reposition and resize several widgets at once
+- **`create-dashboard-page`** / **`rename-dashboard-page`** / **`delete-dashboard-page`** - Manage dashboard pages
 
 #### Categories
 
@@ -45,6 +65,7 @@ The Actual Budget MCP Server allows you to interact with your personal financial
 - **`create-payee`** - Create a new payee
 - **`update-payee`** - Update an existing payee's details
 - **`delete-payee`** - Delete a payee
+- **`merge-payees`** - Merge duplicate payees into a single target payee
 
 #### Rules
 
@@ -62,7 +83,7 @@ The Actual Budget MCP Server allows you to interact with your personal financial
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (v16 or higher)
+- [Node.js](https://nodejs.org/) (v22 or v24; Docker uses v24)
 - [Actual Budget](https://actualbudget.com/) installed and configured
 - [Claude Desktop](https://claude.ai/download) or another MCP-compatible client
 - [Docker Desktop](https://www.docker.com/products/docker-desktop) (optional)
@@ -128,6 +149,28 @@ If your Actual setup requires a different password to unlock the local/encrypted
 # If server auth and encryption/unlock use different passwords
 export ACTUAL_BUDGET_ENCRYPTION_PASSWORD="your-encryption-password"
 ```
+
+Optional: OpenID servers (session token auth)
+
+If your Actual server uses OpenID login (for example Google) with `ACTUAL_OPENID_ENFORCE=true`, password login is disabled, so `ACTUAL_PASSWORD` can't be used. Instead, sign in to Actual in a browser and pass the resulting session token. It takes precedence over `ACTUAL_PASSWORD`.
+
+```bash
+export ACTUAL_SERVER_URL="https://your-actual-server.com"
+export ACTUAL_SESSION_TOKEN="your-session-token"
+```
+
+To find the token, sign in to Actual in your browser, open DevTools, and go to **Application → IndexedDB → actual → asyncStorage**. The value of the `user-token` key is your session token. It's a UUID (e.g. `3f2b8c1e-9a4d-4e7b-8c2a-1d5e6f7a8b9c`), not a long JWT-style bearer token. You can check it with `curl -H "X-ACTUAL-TOKEN: <token>" https://your-actual-server.com/account/validate`, which should return `"validated": true`. Treat it like a password: it grants full access to your budgets. How long it stays valid depends on the server's `ACTUAL_TOKEN_EXPIRATION` setting. If it is invalid or expired, the MCP server still starts, but tool calls fail with `Authentication failed: invalid or expired session token`, because the server connects to Actual on the first request (`--test-resources` reports the error immediately). Sign in again, replace the token, and restart the MCP server.
+
+### Connection lifecycle
+
+The server keeps one shared Actual connection for its entire lifetime and serializes budget operations through it. Downloaded data is re-synced when it exceeds the `ACTUAL_SYNC_TTL_MS` freshness window. In both stdio and HTTP modes, SIGINT and SIGTERM drain in-flight work before the server shuts down. Actual is no longer initialized and shut down for each tool call.
+
+### Report semantics
+
+- Balances and balance histories are capped as of today; future-dated transactions are excluded, and the current-month balance-history row is partial.
+- Closed on-budget accounts remain included in historical reports; closed off-budget accounts stay excluded by default.
+- Monthly income follows Actual's income-group metadata. Refunds net against expenses, zero-activity months count in averages, and uncategorized transfer pairs are skipped.
+- The former Investments bucket is removed from monthly summaries.
 
 ## Usage with Claude Desktop
 
@@ -275,7 +318,14 @@ Once connected, you can ask Claude questions like:
 - "Show me my spending by category last month"
 - "How much did I spend on groceries in January?"
 - "What's my savings rate over the past 3 months?"
+- "Which categories am I overspending on this month?"
+- "How has my net worth changed over the past year?"
+- "Which payees do I spend the most with?"
+- "Is my grocery spending trending up or down?"
 - "Analyze my budget and suggest areas to improve"
+- "What custom reports do I have?"
+- "Add a net worth widget to my Spending Plan dashboard"
+- "Rearrange my dashboard so the cash flow card is full width at the top"
 
 ## Usage with Codex CLI
 
@@ -314,6 +364,20 @@ Since MCP servers communicate over stdio, debugging can be challenging. You can 
 npx @modelcontextprotocol/inspector node build/index.js
 ```
 
+### E2E validation gate
+
+The end-to-end test suite (`vitest.e2e.config.ts`) spins up a real Actual Budget server in a Docker container (via Testcontainers), seeds a budget, and drives it through a real MCP client over stdio to verify accounts, transactions, categories, payees, rules, and imports actually persist. It requires Docker to be running locally.
+
+In CI, the `e2e-test` job in `.github/workflows/pr-validation.yml` only runs on release-please PRs (branch prefix `release-please--`) or when a PR is given the `run-e2e` label — it does not run on every PR by default, since it needs Docker and takes longer than the standard checks.
+
+To run it locally:
+
+```bash
+npm run build && npm run test:e2e
+```
+
+Docker must be installed and running; the test suite pulls and starts the Actual server image automatically.
+
 ## Project Structure
 
 - `index.ts` - Main server implementation
@@ -321,12 +385,27 @@ npx @modelcontextprotocol/inspector node build/index.js
 - `prompts.ts` - Prompt templates for LLM interactions
 - `utils.ts` - Helper functions for date formatting and more
 
-## Fork Modifications
+## Fork deployment behavior
 
-This fork includes the following changes from the upstream [s-stefanov/actual-mcp](https://github.com/s-stefanov/actual-mcp):
+This fork keeps the Cloudflare Container deployment, authenticated stateless HTTP
+at `/mcp`, the `/healthz` endpoint, and `npm start` in HTTP mode. Current account
+balances include future-dated bank transactions; historical reports retain their
+requested date cutoffs. The Docker image uses Node.js 24 and compiles native
+SQLite dependencies in the builder stage.
 
-- **`@actual-app/api` bumped from `^26.3.0` to `^26.5.0`** — updates the Actual Budget API client to the latest version for compatibility with newer Actual server releases.
-- **Balance cutoff fix** — `getAccountBalance` calls now pass a far-future cutoff date (`2099-01-01`) so that future-dated pending transactions are included in balance calculations. Without this fix, banks that pre-date pending transactions (showing them in the future) would cause reported balances to be lower than the actual cleared balance.
+## Registry & Discovery
+
+`actual-mcp` is published to the [official MCP Registry](https://registry.modelcontextprotocol.io)
+as `io.github.s-stefanov/actual-mcp`. Registry metadata lives in
+[`server.json`](./server.json) and is published automatically on each release
+(see `.github/workflows/release-please.yml`).
+
+It advertises two transports on the npm package — `stdio` (default) and
+`streamable-http` (via the `--sse` flag). (A Docker image is also published,
+but is not yet listed as a registry package.)
+
+Post-release directory listings are tracked in
+[`docs/mcp-registry-checklist.md`](./docs/mcp-registry-checklist.md).
 
 ## License
 

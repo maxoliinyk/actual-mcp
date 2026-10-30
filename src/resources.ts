@@ -4,12 +4,12 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { ListResourcesRequestSchema, ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import api from '@actual-app/api';
 
 // Import types from types.ts
 import { Account, Transaction } from './types.js';
 import { formatAmount, formatDate, getDateRange } from './utils.js';
-import { initActualApi, shutdownActualApi } from './actual-api.js';
+import { getAccounts, getTransactions } from './actual-api.js';
+import { fetchAccountBalanceAsOf } from './core/data/fetch-account-balance.js';
 import { fetchAllAccounts } from './core/data/fetch-accounts.js';
 
 export const setupResources = (server: Server): void => {
@@ -18,7 +18,6 @@ export const setupResources = (server: Server): void => {
    */
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
     try {
-      await initActualApi();
       const accounts: Account[] = await fetchAllAccounts();
       return {
         resources: accounts.map((account) => ({
@@ -29,10 +28,10 @@ export const setupResources = (server: Server): void => {
         })),
       };
     } catch (error) {
+      // Reason: re-throwing a non-Error APIError object causes an unhandled rejection crash in Node ≥15.
+      // Return an empty list so the MCP server stays alive when the budget isn't loaded yet.
       console.error('Error listing resources:', error);
-      throw error;
-    } finally {
-      await shutdownActualApi();
+      return { resources: [] };
     }
   });
 
@@ -41,7 +40,6 @@ export const setupResources = (server: Server): void => {
    */
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     try {
-      await initActualApi();
       const uri: string = request.params.uri;
       const url = new URL(uri);
 
@@ -50,7 +48,7 @@ export const setupResources = (server: Server): void => {
 
       // If the path is just "accounts", return list of all accounts
       if (pathParts.length === 0 && url.hostname === 'accounts') {
-        const accounts: Account[] = await api.getAccounts();
+        const accounts: Account[] = await getAccounts();
 
         const accountsText: string = accounts
           .map((account) => {
@@ -76,7 +74,7 @@ export const setupResources = (server: Server): void => {
       // If the path is "accounts/{id}", return account details
       if (pathParts.length === 1 && url.hostname === 'accounts') {
         const accountId: string = pathParts[0];
-        const accounts: Account[] = await api.getAccounts();
+        const accounts: Account[] = await getAccounts();
         const account: Account | undefined = accounts.find((a) => a.id === accountId);
 
         if (!account) {
@@ -91,7 +89,7 @@ export const setupResources = (server: Server): void => {
           };
         }
 
-        const balance: number = await api.getAccountBalance(accountId, new Date('2099-01-01'));
+        const balance: number = await fetchAccountBalanceAsOf(accountId, new Date('2099-01-01'));
         const formattedBalance: string = formatAmount(balance);
 
         const details = `# Account: ${account.name}
@@ -119,7 +117,7 @@ To view transactions for this account, use the get-transactions tool.`;
       if (pathParts.length === 2 && pathParts[1] === 'transactions' && url.hostname === 'accounts') {
         const accountId: string = pathParts[0];
         const { startDate, endDate } = getDateRange();
-        const transactions: Transaction[] = await api.getTransactions(accountId, startDate, endDate);
+        const transactions: Transaction[] = await getTransactions(accountId, startDate, endDate);
 
         if (!transactions || transactions.length === 0) {
           return {

@@ -13,7 +13,7 @@ export interface BudgetFile {
 
 // Type definitions for tool arguments
 export const GetTransactionsArgsSchema = z.object({
-  accountId: z.string(),
+  accountId: z.string().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
   minAmount: z.number().optional(),
@@ -42,9 +42,9 @@ export const MonthlySummaryArgsSchema = z.object({
 export type MonthlySummaryArgs = z.infer<typeof MonthlySummaryArgsSchema>;
 
 export const BalanceHistoryArgsSchema = z.object({
-  accountId: z.string(),
-  includeOffBudget: z.boolean().optional().default(false),
-  months: z.number().optional().default(3),
+  accountId: z.string().min(1).optional(),
+  includeOffBudget: z.boolean().default(false),
+  months: z.number().int().positive().default(3),
 });
 
 export type BalanceHistoryArgs = z.infer<typeof BalanceHistoryArgsSchema>;
@@ -70,6 +70,18 @@ export const UpdateSubtransactionSchema = z.object({
   amount: z.number().describe('Required for subtransactions. A currency amount as an integer'),
   category: z.string().optional().describe('The ID of the category for this subtransaction'),
   notes: z.string().optional().describe('Any additional notes for this subtransaction'),
+  payee: z
+    .string()
+    .optional()
+    .describe('An existing payee ID for this subtransaction. Overridden by transfer_account_id if both are given.'),
+  transfer_account_id: z
+    .string()
+    .optional()
+    .describe(
+      'The ID of the destination account for a transfer originating from this subtransaction (split leg). ' +
+        'When provided, the transfer payee is automatically resolved and the counterpart transaction is created ' +
+        'in the destination account. The amount should be negative (money leaving the source account).'
+    ),
 });
 
 export type UpdateSubtransaction = z.infer<typeof UpdateSubtransactionSchema>;
@@ -120,6 +132,18 @@ export const SubtransactionSchema = z.object({
   amount: z.number().describe('Required for subtransactions. A currency amount as an integer'),
   category: z.string().optional().describe('The ID of the category for this subtransaction'),
   notes: z.string().optional().describe('Any additional notes for this subtransaction'),
+  payee: z
+    .string()
+    .optional()
+    .describe('An existing payee ID for this subtransaction. Overridden by transfer_account_id if both are given.'),
+  transfer_account_id: z
+    .string()
+    .optional()
+    .describe(
+      'The ID of the destination account for a transfer originating from this subtransaction (split leg). ' +
+        'When provided, the transfer payee is automatically resolved and the counterpart transaction is created ' +
+        'in the destination account. The amount should be negative (money leaving the source account).'
+    ),
 });
 
 export type Subtransaction = z.infer<typeof SubtransactionSchema>;
@@ -190,6 +214,18 @@ export const ImportSubtransactionSchema = z.object({
     ),
   category: z.string().optional().describe('The ID of the category for this subtransaction'),
   notes: z.string().optional().describe('Any additional notes for this subtransaction'),
+  payee: z
+    .string()
+    .optional()
+    .describe('An existing payee ID for this subtransaction. Overridden by transfer_account_id if both are given.'),
+  transfer_account_id: z
+    .string()
+    .optional()
+    .describe(
+      'The ID of the destination account for a transfer originating from this subtransaction (split leg). ' +
+        'When provided, the transfer payee is automatically resolved and the counterpart transaction is created ' +
+        'in the destination account. The amount should be negative (money leaving the source account).'
+    ),
 });
 
 // Schema for a single transaction item in a bulk import.
@@ -260,7 +296,6 @@ export interface CategoryGroupInfo {
   id: string;
   name: string;
   isIncome: boolean;
-  isSavingsOrInvestment: boolean;
 }
 
 export interface CategorySpending {
@@ -282,7 +317,6 @@ export interface MonthData {
   month: number;
   income: number;
   expenses: number;
-  investments: number;
   transactions: number;
 }
 
@@ -291,4 +325,92 @@ export interface MonthBalance {
   month: number;
   balance: number;
   transactions: number;
+}
+
+export const BudgetVsActualArgsSchema = z.object({
+  months: z.number().optional().default(3).describe('Number of most recent months to report on'),
+  categoryGroupName: z.string().optional().describe('Restrict the report to a single category group, by name'),
+  includeHidden: z.boolean().optional().default(false).describe('Include categories and groups marked hidden'),
+});
+
+export type BudgetVsActualArgs = z.infer<typeof BudgetVsActualArgsSchema>;
+
+export const NetWorthArgsSchema = z.object({
+  months: z.number().optional().default(12).describe('Number of most recent months to report on'),
+  includeOffBudget: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe('Include off-budget accounts. Defaults to true, since net worth normally covers every account.'),
+  includeClosed: z.boolean().optional().default(false).describe('Include closed accounts'),
+});
+
+export type NetWorthArgs = z.infer<typeof NetWorthArgsSchema>;
+
+export const CategoryTrendsArgsSchema = z.object({
+  months: z.number().optional().default(6).describe('Number of most recent months to report on'),
+  categoryNames: z.array(z.string()).optional().describe('Restrict the report to these categories, by name'),
+  categoryGroupName: z.string().optional().describe('Restrict the report to a single category group, by name'),
+  includeIncome: z.boolean().optional().default(false).describe('Include income categories'),
+});
+
+export type CategoryTrendsArgs = z.infer<typeof CategoryTrendsArgsSchema>;
+
+export const SpendingByPayeeArgsSchema = z.object({
+  startDate: z.string().optional().describe('Start date in YYYY-MM-DD format'),
+  endDate: z.string().optional().describe('End date in YYYY-MM-DD format'),
+  accountId: z.string().optional().describe('Restrict the report to a single account'),
+  limit: z.number().optional().default(20).describe('Maximum number of payees to list'),
+  includeIncome: z.boolean().optional().default(false).describe('Report income received instead of money spent'),
+});
+
+export type SpendingByPayeeArgs = z.infer<typeof SpendingByPayeeArgsSchema>;
+
+export const CashFlowArgsSchema = z.object({
+  months: z.number().optional().default(6).describe('Number of most recent months to report on'),
+  accountId: z.string().optional().describe('Restrict the report to a single account'),
+  interval: z
+    .enum(['monthly', 'weekly'])
+    .optional()
+    .default('monthly')
+    .describe('Bucket size for each row of the report'),
+});
+
+export type CashFlowArgs = z.infer<typeof CashFlowArgsSchema>;
+
+export interface BudgetMonthCategory {
+  id: string;
+  name: string;
+  group_id?: string;
+  is_income?: boolean;
+  hidden?: boolean;
+  budgeted?: number;
+  spent?: number;
+  balance?: number;
+  carryover?: boolean;
+}
+
+export interface BudgetMonthGroup {
+  id: string;
+  name: string;
+  is_income?: boolean;
+  hidden?: boolean;
+  budgeted?: number;
+  spent?: number;
+  balance?: number;
+  categories?: BudgetMonthCategory[];
+}
+
+export interface BudgetMonth {
+  month: string;
+  incomeAvailable: number;
+  lastMonthOverspent: number;
+  forNextMonth: number;
+  totalBudgeted: number;
+  toBudget: number;
+  fromLastMonth: number;
+  totalIncome: number;
+  totalSpent: number;
+  totalBalance: number;
+  categoryGroups: BudgetMonthGroup[];
 }
